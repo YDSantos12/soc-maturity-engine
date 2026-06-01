@@ -1,0 +1,64 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-socmaturity}
+      POSTGRES_USER:     ${POSTGRES_USER:-socuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-socpassword}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-socuser} -d ${POSTGRES_DB:-socmaturity}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    environment:
+      GF_SECURITY_ADMIN_USER:     ${GF_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-grafanapassword}
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+      POSTGRES_USER:               ${POSTGRES_USER:-socuser}
+      POSTGRES_PASSWORD:           ${POSTGRES_PASSWORD:-socpassword}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./dashboards/provisioning:/etc/grafana/provisioning
+      - ./dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ingestion:
+    build: .
+    environment:
+      DATABASE_URL:         postgresql://${POSTGRES_USER:-socuser}:${POSTGRES_PASSWORD:-socpassword}@postgres:5432/${POSTGRES_DB:-socmaturity}
+      WAZUH_WEBHOOK_TOKEN:  ${WAZUH_WEBHOOK_TOKEN:-}
+    volumes:
+      - ./ingestion:/app/ingestion
+      - ./engines:/app/engines
+    ports:
+      - "8000:8000"
+    command: uvicorn ingestion.webhook_server:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kpi_scheduler:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-socuser}:${POSTGRES_PASSWORD:-socpassword}@postgres:5432/${POSTGRES_DB:-socmaturity}
+    command: python -m engines.kpi_engine --schedule
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  grafana_data:
